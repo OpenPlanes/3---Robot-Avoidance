@@ -1,0 +1,395 @@
+%% Consider a linear model
+% States are 2D position, 2D velocity
+% i.e. x = [xPos,yPos,xVel,yVel]
+clear all
+
+% Dimentions
+Nx = 4;
+
+% State-space matrices
+A = [0 0 1 0; 0 0 0 1; 0 0 0 0; 0 0 0 0];
+B = [0 0;0 0;1 0;0 1];
+C = eye(4);
+D = 0;
+G = ss(A,B,C,D);
+
+% Initial conditions
+x0_1 = [-1;0;0;0];
+%x0_1 = [-1.0;-1.0;0;0];
+%x0_2 = [-1;0;0;0];
+%x0_2 = [-1;1;0;0];
+%x0_2 = [1;1;0;0];
+x0_2 = [-0.4;1;0;0];
+%x0_3 = [1;1;0;0];
+x0_3 = [1;0;0;0;];
+%x0_3 = [0.1;1;0;0;];
+
+x1Offset = [1.1;0.6;0;0];
+%x1Offset = [1.1;1.1;0;0];
+%x2Offset = [1.1;0.6;0;0];
+%x2Offset = [1.1;0.1;0;0];
+%x2Offset = [0.1;0.1;0;0];
+x2Offset = [0.8;0.1;0;0];
+%x3Offset = [0.1;0.1;0;0];
+x3Offset = [0.1;0.6;0;0];
+%x3Offset = [0.6;0;0;0];
+
+%% Infinite Horizon LQR Design
+Q = blkdiag(2,2,5,5);
+L = [2 0 0 0;0 2 0 0; 0 0 0 0; 0 0 0 0];
+R = 10000*eye(2);
+
+tEnd = 70;
+tIncStep = 0.025;
+tInc = 0:tIncStep:tEnd;
+
+[K,P] = lqr(A,B,Q,R);
+%[yCL_1,tCL_1,xCL_1] = initial(CL,x0_1);
+%[yCL_2,tCL_2,xCL_2] = initial(CL,x0_2);
+
+%figure
+%plot(yCL_1(:,1)+5,yCL_1(:,2)+5,'r',yCL_2(:,1)+5,yCL_2(:,2)-5,'b')
+
+%LQR_1 = [yCL_1(:,1)+5,yCL_1(:,2)+5];
+%LQR_2 = [yCL_2(:,1)+5,yCL_2(:,2)-5];
+
+%% 
+numRobots = 3;
+q =0;
+rT = [0.075, 0.075, 0.075]; %Keep out radius for each robot
+robot1_position = x0_1+x1Offset;
+robot2_position = x0_2+x2Offset;
+robot3_position = x0_3+x3Offset;
+
+endPos = [1.1, 1.1, 0, 0, 1.1, 0.1, 0, 0, 0.1, 0.6, 0, 0];
+
+robotPos = [robot1_position' , robot2_position', robot3_position'];
+robotPosBack_T = [robot1_position' , robot2_position', robot3_position'];
+for i=1:length(tInc)-1
+    timeStep = tInc(i);
+
+    %robotPos(end,9:12) = [0.6;0.7;0;0];
+
+    h=eye(3)*10;
+    h_dot = zeros(9,4);
+    for robotIndex=1:numRobots
+        for agentIndex=1:numRobots
+            if robotIndex ~= agentIndex
+                [h(robotIndex,agentIndex),h_dot(agentIndex,:)]  = barrierFunction(robotPos(end,(1+(robotIndex-1)*4):(robotIndex)*4),robotPos(end,(1+(agentIndex-1)*4):(agentIndex)*4),rT(agentIndex));
+            end
+        end
+    end
+        
+        u0_1 = -K*(robotPos(end,1:4)'-x1Offset);
+        u0_2 = -K*(robotPos(end,5:8)'-x2Offset);
+        u0_3 = -K*(robotPos(end,9:12)'-x3Offset);
+
+        robot1_position_f = [robotPos(end,3); robotPos(end,4); 0; 0];
+        robot2_position_f = [robotPos(end,7); robotPos(end,8); 0; 0];
+        robot3_position_f = [robotPos(end,11); robotPos(end,12); 0; 0];
+
+        tBackupEnd = tIncStep;
+        %tTillEnd = tEnd-timeStep;
+        %tTillEnd = min(tEnd-timeStep,15);
+        tTillEnd = 20;
+
+        [tmp1,r1Break] = ode45(@(t,x) backup_break_dynamics(x),[0 tBackupEnd],robotPos(end,1:4));
+        [tmp2,r2Break] = ode45(@(t,x) backup_break_dynamics(x),[0 tBackupEnd],robotPos(end,5:8));
+        [tmp3,r3Break] = ode45(@(t,x) backup_break_dynamics(x),[0 tBackupEnd],robotPos(end,9:12));
+
+        [tmp1_t,r1BreakT] = ode45(@(t,x) backup_break_dynamics(x),[0 tTillEnd],robotPos(end,1:4));
+        [tmp2_t,r2BreakT] = ode45(@(t,x) backup_break_dynamics(x),[0 tTillEnd],robotPos(end,5:8));
+        [tmp3_t,r3BreakT] = ode45(@(t,x) backup_break_dynamics(x),[0 tTillEnd],robotPos(end,9:12));
+        
+        robot1_postision_backup_c = [r1Break(end,1);r1Break(end,2);r1Break(end,3);r1Break(end,4);];
+        robot2_postision_backup_c = [r2Break(end,1);r2Break(end,2);r2Break(end,3);r2Break(end,4);];
+        robot3_postision_backup_c = [r3Break(end,1);r3Break(end,2);r3Break(end,3);r3Break(end,4);];
+
+        robot1_postision_backup_T = [r1BreakT(end,1);r1BreakT(end,2);r1BreakT(end,3);r1BreakT(end,4);];
+        robot2_postision_backup_T = [r2BreakT(end,1);r2BreakT(end,2);r2BreakT(end,3);r2BreakT(end,4);];
+        robot3_postision_backup_T = [r3BreakT(end,1);r3BreakT(end,2);r3BreakT(end,3);r3BreakT(end,4);];
+        
+        robotPosBack_c = [robot1_postision_backup_c', robot2_postision_backup_c', robot3_postision_backup_c'];
+        robotPosBack_T = [robotPosBack_T; robot1_postision_backup_T', robot2_postision_backup_T', robot3_postision_backup_T'];
+
+        robot1_postision_backup_fc = [r1Break(end,3);r1Break(end,4);-r1Break(end,3);-r1Break(end,4);]; %zeros(4,1);
+        robot2_postision_backup_fc = [r2Break(end,3);r2Break(end,4);-r2Break(end,3);-r2Break(end,4);];%zeros(4,1);
+        robot3_postision_backup_fc = [r3Break(end,3);r3Break(end,4);-r3Break(end,3);-r3Break(end,4);]; %zeros(4,1);
+
+        robot1_postision_backup_ft = [r1BreakT(end,3);r1BreakT(end,4);-r1BreakT(end,3);-r1BreakT(end,4);];%zeros(4,1);
+        robot2_postision_backup_ft = [r2BreakT(end,3);r2BreakT(end,4);-r2BreakT(end,3);-r2BreakT(end,4);];%zeros(4,1);
+        robot3_postision_backup_ft = [r3BreakT(end,3);r3BreakT(end,4);-r3BreakT(end,3);-r3BreakT(end,4);];%zeros(4,1);
+
+        h_back=eye(3)*10;
+        h_back_dot = zeros(9,4);
+        h_back_t=eye(3)*10;
+        h_back_dot_t = zeros(9,4);
+        index = 1;
+        for robotIndex=1:numRobots
+            for agentIndex=1:numRobots
+                if robotIndex ~= agentIndex
+                    [h_back(robotIndex,agentIndex),h_back_dot(index,:)] = barrierFunction(robotPosBack_c(end,(1+(robotIndex-1)*4):(robotIndex)*4),robotPosBack_c(end,(1+(agentIndex-1)*4):(agentIndex)*4),rT(agentIndex));
+                    [h_back_t(robotIndex,agentIndex),h_back_dot_t(index,:)] = barrierFunction(robotPosBack_T(end,(1+(robotIndex-1)*4):(robotIndex)*4),robotPosBack_T(end,(1+(agentIndex-1)*4):(agentIndex)*4),rT(agentIndex));
+                end
+                index = index+1;
+            end
+        end
+                
+        
+        if ~all(all(h_back_t>0.02)) || ~all(all(h_back>0.02)) 
+            
+            
+            dist = 1e-5;
+            dh12_c = zeros(4,1);
+            dh13_c = zeros(4,1);
+            dh21_c = zeros(4,1);
+            dh23_c = zeros(4,1);
+            dh31_c = zeros(4,1);
+            dh32_c = zeros(4,1);
+
+            dh12_t = zeros(4,1);
+            dh13_t = zeros(4,1);
+            dh21_t = zeros(4,1);
+            dh23_t = zeros(4,1);
+            dh31_t = zeros(4,1);
+            dh32_t = zeros(4,1);
+            
+            for l=1:4
+                x_pert = zeros(4,1);
+                x_pert(l) = dist;
+              
+                
+                h12_tmp =barrierFunction(robotPosBack_c(end,1:4)+x_pert',robotPosBack_c(end,5:8),rT(2));
+                h13_tmp =barrierFunction(robotPosBack_c(end,1:4)+x_pert',robotPosBack_c(end,9:12),rT(3));
+
+                h21_tmp =barrierFunction(robotPosBack_c(end,5:8)+x_pert',robotPosBack_c(end,1:4),rT(1));
+                h23_tmp =barrierFunction(robotPosBack_c(end,5:8)+x_pert',robotPosBack_c(end,9:12),rT(3));
+
+                h31_tmp =barrierFunction(robotPosBack_c(end,9:12)+x_pert',robotPosBack_c(end,1:4),rT(1));
+                h32_tmp =barrierFunction(robotPosBack_c(end,9:12)+x_pert',robotPosBack_c(end,5:8),rT(2));
+
+                h12_tmpT =barrierFunction(robotPosBack_T(end,1:4)+x_pert',robotPosBack_T(end,5:8),rT(2));
+                h13_tmpT =barrierFunction(robotPosBack_T(end,1:4)+x_pert',robotPosBack_T(end,9:12),rT(3));
+
+                h21_tmpT =barrierFunction(robotPosBack_T(end,5:8)+x_pert',robotPosBack_T(end,1:4),rT(1));
+                h23_tmpT =barrierFunction(robotPosBack_T(end,5:8)+x_pert',robotPosBack_T(end,9:12),rT(3));
+
+                h31_tmpT =barrierFunction(robotPosBack_T(end,9:12)+x_pert',robotPosBack_T(end,1:4),rT(1));
+                h32_tmpT =barrierFunction(robotPosBack_T(end,9:12)+x_pert',robotPosBack_T(end,5:8),rT(2));
+
+                dh12_t(l) = (h12_tmpT-h_back_t(1,2))/dist;
+                dh13_t(l) = (h13_tmpT-h_back_t(1,3))/dist;
+
+                dh21_t(l) = (h21_tmpT-h_back_t(2,1))/dist;
+                dh23_t(l) = (h23_tmpT-h_back_t(2,3))/dist;
+
+                dh31_t(l) = (h31_tmpT-h_back_t(3,1))/dist;
+                dh32_t(l) = (h32_tmpT-h_back_t(3,2))/dist;
+
+                dh12_c(l) = (h12_tmp-h_back(1,2))/dist;
+                dh13_c(l) = (h13_tmp-h_back(1,3))/dist;
+
+                dh21_c(l) = (h21_tmp-h_back(2,1))/dist;
+                dh23_c(l) = (h23_tmp-h_back(2,3))/dist;
+
+                dh31_c(l) = (h31_tmp-h_back(3,1))/dist;
+                dh32_c(l) = (h32_tmp-h_back(3,2))/dist;
+            end
+            
+            phiTimeT = tTillEnd;
+            phiTimeC = tIncStep;
+            
+
+            q0 = [1;0;0;0;0;1;0;0;0;0;1;0;0;0;0;1];
+            gradPhi1_test = [ 0 0 1 0; 0 0 0 1; 0 0 -0.2 0; 0 0 0 -0.2;];
+            [tmp, y1] = ode45(@(t,y) [gradPhi1_test*[y(1); y(5); y(9); y(13)];gradPhi1_test* [y(2); y(6); y(10); y(14)]; gradPhi1_test*[y(3); y(7); y(11); y(15)]; gradPhi1_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeC],q0);
+            [tmp, y1T] = ode45(@(t,y) [gradPhi1_test*[y(1); y(5); y(9); y(13)];gradPhi1_test* [y(2); y(6); y(10); y(14)]; gradPhi1_test*[y(3); y(7); y(11); y(15)]; gradPhi1_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeT],q0);
+            gradPhi1C = [y1(end,1) y1(end,2) y1(end,3) y1(end,4); y1(end,5) y1(end,6) y1(end,7) y1(end,8); y1(end,9) y1(end,10) y1(end,11) y1(end,12); y1(end,13) y1(end,14) y1(end,15) y1(end,16);];
+            gradPhi1T = [y1T(end,1) y1T(end,2) y1T(end,3) y1T(end,4); y1T(end,5) y1T(end,6) y1T(end,7) y1T(end,8); y1T(end,9) y1T(end,10) y1T(end,11) y1T(end,12); y1T(end,13) y1T(end,14) y1T(end,15) y1T(end,16);];
+            gradPhi1C = gradPhi1C';
+            gradPhi1T = gradPhi1T';
+
+            gradPhi2_test = [ 0 0 1 0; 0 0 0 1; 0 0 -0.2 0; 0 0 0 -0.2;];
+            [tmp, y2] = ode45(@(t,y) [gradPhi2_test*[y(1); y(5); y(9); y(13)];gradPhi2_test* [y(2); y(6); y(10); y(14)]; gradPhi2_test*[y(3); y(7); y(11); y(15)]; gradPhi2_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeC],q0);
+            [tmp, y2T] = ode45(@(t,y) [gradPhi2_test*[y(1); y(5); y(9); y(13)];gradPhi2_test* [y(2); y(6); y(10); y(14)]; gradPhi2_test*[y(3); y(7); y(11); y(15)]; gradPhi2_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeT],q0);
+            gradPhi2C = [y2(end,1) y2(end,2) y2(end,3) y2(end,4); y2(end,5) y2(end,6) y2(end,7) y2(end,8); y2(end,9) y2(end,10) y2(end,11) y2(end,12); y2(end,13) y2(end,14) y2(end,15) y2(end,16);];
+            gradPhi2T = [y2T(end,1) y2T(end,2) y2T(end,3) y2T(end,4); y2T(end,5) y2T(end,6) y2T(end,7) y2T(end,8); y2T(end,9) y2T(end,10) y2T(end,11) y2T(end,12); y2T(end,13) y2T(end,14) y2T(end,15) y2T(end,16);];
+            gradPhi2C = gradPhi2C';
+            gradPhi2T = gradPhi2T';
+
+            gradPhi3_test =  [0 0 1 0; 0 0 0 1; 0 0 -0.2 0; 0 0 0 -0.2;];
+            [tmp, y3] = ode45(@(t,y) [gradPhi3_test*[y(1); y(5); y(9); y(13)];gradPhi3_test* [y(2); y(6); y(10); y(14)]; gradPhi3_test*[y(3); y(7); y(11); y(15)]; gradPhi3_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeC],q0);
+            [tmp, y3T] = ode45(@(t,y) [gradPhi3_test*[y(1); y(5); y(9); y(13)];gradPhi3_test* [y(2); y(6); y(10); y(14)]; gradPhi3_test*[y(3); y(7); y(11); y(15)]; gradPhi3_test*[y(4); y(8); y(12); y(16)]], [0 phiTimeT],q0);
+            gradPhi3C = [y3(end,1) y3(end,2) y3(end,3) y3(end,4); y3(end,5) y3(end,6) y3(end,7) y3(end,8); y3(end,9) y3(end,10) y3(end,11) y3(end,12); y3(end,13) y3(end,14) y3(end,15) y3(end,16);];
+            gradPhi3T = [y3T(end,1) y3T(end,2) y3T(end,3) y3T(end,4); y3T(end,5) y3T(end,6) y3T(end,7) y3T(end,8); y3T(end,9) y3T(end,10) y3T(end,11) y3T(end,12); y3T(end,13) y3T(end,14) y3T(end,15) y3T(end,16);];
+            gradPhi3C = gradPhi3C';
+            gradPhi3T = gradPhi3T';
+
+
+            h_back_t_goal=zeros(3,1);
+            h_back_dot_t_goal=zeros(3,4);
+            h_bound=zeros(3,1);
+            h_bound_dot=zeros(3,4);
+            for agentIndex=1:numRobots
+               [h_back_t_goal(agentIndex),h_back_dot_t_goal(agentIndex,:)] = barrierFunction_goal(robotPos(end,(1+(agentIndex-1)*4):(agentIndex)*4),endPos(end,(1+(agentIndex-1)*4):(agentIndex)*4),0.025);
+               [h_bound(agentIndex),h_bound_dot(agentIndex,:)] = barrierFunction_Bounds(robotPosBack_c(end,(1+(agentIndex-1)*4):(agentIndex)*4));
+            end
+            
+            h_back_dot_t = [0 0 0 0; dh12_t'; dh13_t'; dh21_t'; 0 0 0 0; dh23_t'; dh31_t'; dh32_t'; 0 0 0 0];
+            h_back_dot_c = [0 0 0 0; dh12_c'; dh13_c'; dh21_c'; 0 0 0 0; dh23_c'; dh31_c'; dh32_c'; 0 0 0 0];
+
+
+            % Define quadratic cost function
+            options = optimoptions('quadprog','Display','none');
+            H = eye(2);
+            f1 = [-u0_1' 1e6]; 
+            alphaC = 0.5;
+            alphaT = 0.5;
+            options = optimoptions('quadprog','Display','none');
+            H1 = diag([ones(1,2) 0]);
+
+            A12 = -h_back_dot(2,:)*gradPhi1C*B;
+            A13 = -h_back_dot(3,:)*gradPhi1C*B;
+            A12t = -(h_back_dot_t(2,:)*gradPhi1T*B);
+            A13t = -(h_back_dot_t(3,:)*gradPhi1T*B);
+            ASafe1= -h_bound_dot(1,:)*gradPhi1C*B;
+            A1 = [A12; A13; A12t; A13t; ASafe1];
+            A1full = [ A1 -ones(size(A1,1),1)];
+            b12 = (0.5*alphaC*h_back(1,2)+h_back_dot(2,:)*gradPhi1C*(robot1_position_f-robot1_postision_backup_fc));
+            b13 = (0.5*alphaC*h_back(1,3)+h_back_dot(3,:)*gradPhi1C*(robot1_position_f-robot1_postision_backup_fc));
+            b12t = (0.5*(alphaT*h_back_t(1,2))+h_back_dot_t(2,:)*gradPhi1T*(robot1_position_f-robot1_postision_backup_fc));
+            b13t = (0.5*(alphaT*h_back_t(1,3))+h_back_dot_t(3,:)*gradPhi1T*(robot1_position_f-robot1_postision_backup_fc));
+            b1Safe = (alphaT*h_bound(1)+h_bound_dot(1,:)*gradPhi1C*(robot1_position_f-robot1_postision_backup_fc));
+            b1 = [b12;b13;b12t;b13t; b1Safe;];
+            sol1 = quadprog(H1,f1,A1full,b1,[],[],[-0.05,-0.05, 0],[0.5,0.5, inf],u0_1,options);
+            
+            f2 = [-u0_2' 1e6];
+            A21 = -h_back_dot(4,:)*gradPhi2C*B;
+            A23 = -h_back_dot(6,:)*gradPhi2C*B;
+            A21t = -h_back_dot_t(4,:)*gradPhi2T*B;
+            A23t = -h_back_dot_t(6,:)*gradPhi2T*B;
+            ASafe2= -h_bound_dot(2,:)*gradPhi2C*B;
+            A2 = [A21; A23; A21t; A23t; ASafe2];
+            A2full = [ A2 -ones(size(A2,1),1)];
+            b21 = (0.5*alphaC*h_back(2,1)+h_back_dot(4,:)*gradPhi2C*(robot2_position_f-robot2_postision_backup_fc));
+            b23 = (0.5*alphaC*h_back(2,3)+h_back_dot(6,:)*gradPhi2C*(robot2_position_f-robot2_postision_backup_fc));
+            b21t = (0.5*alphaT*h_back_t(2,1)+h_back_dot_t(4,:)*gradPhi2T*(robot2_position_f-robot2_postision_backup_fc));
+            b23t = (0.5*alphaT*h_back_t(2,3)+h_back_dot_t(6,:)*gradPhi2T*(robot2_position_f-robot2_postision_backup_fc));
+            b2Safe = (alphaT*h_bound(2)+h_bound_dot(2,:)*gradPhi2C*(robot2_position_f-robot2_postision_backup_fc));
+            b2 = [b21;b23; b21t; b23t;b2Safe]; 
+            sol2 = quadprog(H1,f2,A2full,b2,[],[],[-0.05,-0.05, 0],[0.05,0.05,inf],u0_2,options);
+
+            f3 = [-u0_3' 1e6];
+            A31 = -h_back_dot(7,:)*gradPhi3C*B;
+            A32 = -h_back_dot(8,:)*gradPhi3C*B;
+            A31t = -h_back_dot_t(7,:)*gradPhi3T*B;
+            A32t = -h_back_dot_t(8,:)*gradPhi3T*B;
+            ASafe3= -h_bound_dot(3,:)*gradPhi3C*B;
+            A3 = [A31; A32; A31t; A32t;ASafe3;];
+            A3full = [ A3 -ones(size(A3,1),1)];
+            b31 = (0.5*alphaC*h_back(3,1)+h_back_dot(7,:)*gradPhi3C*(robot3_position_f-robot3_postision_backup_fc));
+            b32 = (0.5*alphaC*h_back(3,2)+h_back_dot(8,:)*gradPhi3C*(robot3_position_f-robot3_postision_backup_fc));
+            b31t = (0.5*alphaT*h_back_t(3,1)+h_back_dot_t(7,:)*gradPhi3T*(robot3_position_f-robot3_postision_backup_fc));
+            b32t = (0.5*alphaT*h_back_t(3,2)+h_back_dot_t(8,:)*gradPhi3T*(robot3_position_f-robot3_postision_backup_fc));
+            b3Safe = (alphaT*h_bound(3)+h_bound_dot(3,:)*gradPhi3C*(robot3_position_f-robot3_postision_backup_fc));
+            b3 = [b31;b32;b31t;b32t;b3Safe;]; 
+            sol3 = quadprog(H1,f3,A3full,b3,[],[],[-0.05,-0.05, 0],[0.05,0.05,inf],u0_3,options);
+
+            u_1 = sol1(1:2);
+            u_2 = sol2(1:2);
+            u_3 = sol3(1:2);
+
+            q =q + 1;
+        else
+            u_1 = u0_1;
+            u_2 = u0_2;
+            u_3 = u0_3;
+        end
+
+    
+    if ~all(all(h> 0.0))
+        break
+    end
+    [tmp, robPos1] = ode45(@(t,x) A*x+B*u_1, [0 tIncStep],robotPos(end,1:4)');
+    [tmp, robPos2] = ode45(@(t,x) A*x+B*u_2, [0 tIncStep],robotPos(end,5:8)');
+    [tmp, robPos3] = ode45(@(t,x) A*x+B*u_3, [0 tIncStep],robotPos(end,9:12)');
+
+    robotPos = [robotPos; robPos1(end,:) , robPos2(end,:), robPos3(end,:)];
+end
+    
+
+%%
+figure(1)
+vidfile = VideoWriter('3Robots_break.mp4','MPEG-4');
+incP = 1:round(length(robotPos(:,1))/70):length(robotPos(:,1));
+incP(end+1) = length(robotPos(:,1));
+vidfile.FrameRate = round(length(robotPos(:,1))/700);
+open(vidfile);
+for p = 1:(length(incP))
+    n = round(incP(p));
+    plot(robotPos(1:n,1),robotPos(1:n,2),'-r',robotPos(1:n,5),robotPos(1:n,6),'-b',robotPos(1:n,9),robotPos(1:n,10),'-k')
+    xlim([0 1.2])
+    ylim([0 1.2])
+    hold on
+    plot(robotPosBack_T(n,1),robotPosBack_T(n,2),'-ro',robotPosBack_T(n,5),robotPosBack_T(n,6),'-bo',robotPosBack_T(n,9),robotPosBack_T(n,10),'-ko')
+    theta = linspace(-pi,pi,1000);
+    c1 = robotPos(n,1);
+    c2 = robotPos(n,2);
+    Xc = c1 + rT(1)*cos(theta);
+    Yc = c2 + rT(1)*sin(theta);
+    
+    % Unsafe location
+    plot(c1,c2,'ko','MarkerFaceColor','r','LineWidth',2);
+    p3 = patch(Xc,Yc,'r','LineWidth',2,'FaceAlpha',.3);
+    p3.EdgeColor = 'r';
+    
+    c12 = robotPos(n,5);
+    c22 = robotPos(n,6);
+    Xc2 = c12 + rT(2)*cos(theta);
+    Yc2 = c22 + rT(2)*sin(theta);
+    
+    % Unsafe location
+    plot(c12,c22,'ko','MarkerFaceColor','b','LineWidth',2);
+    p4 = patch(Xc2,Yc2,'b','LineWidth',2,'FaceAlpha',.3);
+    p4.EdgeColor = 'r';
+
+    c123 = robotPos(n,9);
+    c223 = robotPos(n,10);
+    Xc3 = c123 + rT(3)*cos(theta);
+    Yc3 = c223 + rT(3)*sin(theta);
+    
+    % Unsafe location
+    plot(c123,c223,'ko','MarkerFaceColor','k','LineWidth',2);
+    p4 = patch(Xc3,Yc3,'g','LineWidth',2,'FaceAlpha',.3);
+    p4.EdgeColor = 'r';
+
+    drawnow
+    writeVideo(vidfile,getframe(gcf));
+    
+    hold off
+end
+close(vidfile)
+%%
+
+function [xdot] = backup_break_dynamics(x)
+%     x3 = [ max(-0.0025, min(x(3), 0.0025))];
+%     x4 = [ max(-0.0025, min(x(4), 0.0025))];
+%     xdot = [x(3);x(4);-1*x3;-1*x4];
+    xdot = [x(3);x(4);-0.3*x(3);-0.3*x(4)];
+end
+
+function [h,hdot] = barrierFunction(x_1,x_2,rT)
+    h = (x_1(1)-x_2(1))^2 + (x_1(2)-x_2(2))^2 - rT^2;
+    hdot = [2*(x_1(1)-x_2(1))*x_1(3)  2*(x_1(2)-x_2(2))*x_1(4) 0 0];
+    %hdot = [2*(x_1(1)-x_2(1))  2*(x_1(2)-x_2(2)) 0 0];
+end
+
+function [h,hdot] = barrierFunction_goal(x_1,x_2,rT)
+    h = -(x_1(1)-x_2(1))^2 - (x_1(2)-x_2(2))^2 + rT^2;
+    hdot = [-2*(x_1(1)-x_2(1))*x_1(3)  -2*(x_1(2)-x_2(2))*x_1(4) 0 0]; 
+end
+
+function [h,hdot] = barrierFunction_Bounds(x_1)
+    h = -(x_1(1)-0.6)^2 - (x_1(2)-0.6)^2 + 0.75^2;
+    hdot = [-2*(x_1(1)-0.6)*x_1(3)  -2*(x_1(2)-0.6)*x_1(4) 0 0]; 
+end
